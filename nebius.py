@@ -1,6 +1,6 @@
 import os
 import json
-from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi import FastAPI, File, UploadFile, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from openai import OpenAI
@@ -30,22 +30,34 @@ cloudinary.config(
     secure=True  # Use HTTPS for all requests
 )
 
-# Configure Gemini API - Not needed when using Client API
-# genai.configure(api_key=GEMINI_API_KEY)
-
 app = FastAPI()
 
-origins = [
-"https://www.e-hospital.ca",
-"http://localhost:5173"
-]
+# CORS configuration - allow all origins
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,  # Must be False when using "*"
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Add custom middleware to ensure CORS headers are always present
+@app.middleware("http")
+async def add_cors_headers(request, call_next):
+    response = await call_next(request)
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "*"
+    return response
+
+# Handle OPTIONS requests explicitly
+@app.options("/{path:path}")
+async def options_handler(path: str):
+    response = Response()
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "*"
+    return response
 
 # Configuration
 MAX_TOKENS = 1000
