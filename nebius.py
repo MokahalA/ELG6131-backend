@@ -35,7 +35,10 @@ cloudinary.config(
 
 app = FastAPI()
 
-origins = ["*"]
+origins = [
+"https://www.e-hospital.ca",
+"http://localhost:5173"
+]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
