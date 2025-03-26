@@ -1,16 +1,14 @@
-'''This file contains the API endpoints for the Document Digitizer application'''
-
 import os
 import json
 from fastapi import FastAPI, File, UploadFile, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
 import uvicorn
 
 from utils import (
     upload_file_to_cloudinary, 
     analyze_image_with_nebius, 
-    analyze_image_with_gemini
+    analyze_image_with_gemini,
+    AnalyzeRequest
 )
 
 app = FastAPI()
@@ -19,12 +17,12 @@ app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=False, # Removing credentials to make CORS work
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Adding custom middleware to ensure CORS headers are always present
+# Add custom middleware to ensure CORS headers are always present
 @app.middleware("http")
 async def add_cors_headers(request, call_next):
     response = await call_next(request)
@@ -41,9 +39,6 @@ async def options_handler(path: str):
     response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
     response.headers["Access-Control-Allow-Headers"] = "*"
     return response
-
-class AnalyzeRequest(BaseModel):
-    image_url: str
 
 @app.post("/upload-prescription/")
 async def upload_prescription(file: UploadFile = File(...)):

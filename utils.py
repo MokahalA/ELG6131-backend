@@ -1,10 +1,8 @@
-'''This file contains all the services for the Document Digitzer application'''
-
-
 import os
 import json
 import requests
 from fastapi import HTTPException
+from pydantic import BaseModel
 from dotenv import load_dotenv
 from openai import OpenAI
 from google import genai
@@ -30,6 +28,10 @@ cloudinary.config(
     api_secret=CLOUDINARY_API_SECRET,
     secure=True  # Use HTTPS for all requests
 )
+
+class AnalyzeRequest(BaseModel):
+    image_url: str
+
 
 # Configuration
 MAX_TOKENS = 1000
