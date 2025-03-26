@@ -1,15 +1,16 @@
+'''This file contains all the services for the Document Digitzer application'''
+
+
 import os
 import json
-from fastapi import FastAPI, File, UploadFile, HTTPException, Response
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+import requests
+from fastapi import HTTPException
+from dotenv import load_dotenv
 from openai import OpenAI
 from google import genai
-import uvicorn
 import cloudinary
 import cloudinary.uploader
 import cloudinary.api
-from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
@@ -30,55 +31,36 @@ cloudinary.config(
     secure=True  # Use HTTPS for all requests
 )
 
-app = FastAPI()
-
-# CORS configuration - allow all origins
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,  # Must be False when using "*"
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# Add custom middleware to ensure CORS headers are always present
-@app.middleware("http")
-async def add_cors_headers(request, call_next):
-    response = await call_next(request)
-    response.headers["Access-Control-Allow-Origin"] = "*"
-    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
-    response.headers["Access-Control-Allow-Headers"] = "*"
-    return response
-
-# Handle OPTIONS requests explicitly
-@app.options("/{path:path}")
-async def options_handler(path: str):
-    response = Response()
-    response.headers["Access-Control-Allow-Origin"] = "*"
-    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
-    response.headers["Access-Control-Allow-Headers"] = "*"
-    return response
-
 # Configuration
 MAX_TOKENS = 1000
 NEBIUS_MODEL_NAME = "Qwen/Qwen2-VL-7B-Instruct"
 GEMINI_MODEL_NAME = "gemini-2.0-flash" 
 
 # Initialize Nebius client
-client = OpenAI(
+nebius_client = OpenAI(
     base_url="https://api.studio.nebius.ai/v1/",
     api_key=NEBIUS_API_KEY
 )
 
-class AnalyzeRequest(BaseModel):
-    image_url: str
+async def upload_file_to_cloudinary(file, folder: str):
+    """Upload an image or convert PDF to JPG and upload to Cloudinary."""
+    file_bytes = await file.read()
+    upload_options = {
+        "folder": folder,
+        "resource_type": "auto", # let Cloudinary determine the type
+    }
+    if file.filename.lower().endswith(".pdf"):
+        upload_options["format"] = "jpg" #convert to jpg
+        upload_options["page"] = "1" #only first page
+    response = cloudinary.uploader.upload(file_bytes, **upload_options)
+
+    if not response.get("secure_url"):
+        raise HTTPException(status_code=500, detail="Cloudinary upload failed.")
+    return response["secure_url"]
 
 async def analyze_image_with_gemini(image_url: str) -> dict:
     """Analyze lab requisition image using Gemini API."""
     try:
-        import requests
-        from google.genai import types
-        
         # Download the image from URL
         response = requests.get(image_url)
         if response.status_code != 200:
@@ -207,7 +189,7 @@ async def analyze_image_with_gemini(image_url: str) -> dict:
         client = genai.Client(api_key=GEMINI_API_KEY)
         
         # Create image part using Part.from_bytes
-        image_part = types.Part.from_bytes(data=response.content, mime_type="image/jpeg")
+        image_part = genai.types.Part.from_bytes(data=response.content, mime_type="image/jpeg")
         
         # Generate content using the Client API
         generation_response = client.models.generate_content(
@@ -241,7 +223,7 @@ def analyze_image_with_nebius(image_url: str, prompt_text: str) -> dict:
                 {"type": "image_url", "image_url": {"url": image_url}}
             ]}
         ]
-        response = client.chat.completions.create(
+        response = nebius_client.chat.completions.create(
             model=NEBIUS_MODEL_NAME,
             messages=messages,
             max_tokens=MAX_TOKENS,
@@ -256,56 +238,3 @@ def analyze_image_with_nebius(image_url: str, prompt_text: str) -> dict:
         return {"description": json.loads(output_text), "status": "success"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing image with Nebius: {str(e)}")
-
-async def upload_file_to_cloudinary(file: UploadFile, folder: str):
-    """Upload an image or convert PDF to JPG and upload to Cloudinary."""
-    file_bytes = await file.read()
-    upload_options = {
-        "folder": folder,
-        "resource_type": "auto", # let Cloudinary determine the type
-    }
-    if file.filename.lower().endswith(".pdf"):
-      upload_options["format"] = "jpg" #convert to jpg
-      upload_options["page"] = "1" #only first page
-    response = cloudinary.uploader.upload(file_bytes, **upload_options)
-
-    if not response.get("secure_url"):
-        raise HTTPException(status_code=500, detail="Cloudinary upload failed.")
-    return response["secure_url"]
-
-@app.post("/upload-prescription/")
-async def upload_prescription(file: UploadFile = File(...)):
-    return {"message": "Prescription uploaded successfully", "url": await upload_file_to_cloudinary(file, "prescriptions")}
-
-@app.get("/fetch-prescriptions/")
-async def fetch_prescriptions():
-    try:
-        response = cloudinary.api.resources(type="upload", resource_type="image", prefix="prescriptions/")
-        return {"images": [item["secure_url"] for item in response.get("resources", [])]}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error fetching prescriptions: {str(e)}")
-
-@app.post("/analyze-prescription/")
-async def analyze_prescription(request: AnalyzeRequest):
-    prompt_text = "For this prescription document image, provide a JSON with fields: medications (name, dosage, frequency), instructions (summary of the prescription). Provide only the JSON and only these fields."
-    return analyze_image_with_nebius(request.image_url, prompt_text)
-
-@app.post("/upload-lab-requisition/")
-async def upload_lab_requisition(file: UploadFile = File(...)):
-    return {"message": "Lab requisition uploaded successfully", "url": await upload_file_to_cloudinary(file, "lab-requisitions")}
-
-@app.get("/fetch-lab-requisitions/")
-async def fetch_lab_requisitions():
-    try:
-        response = cloudinary.api.resources(type="upload", resource_type="image", prefix="lab-requisitions/")
-        return {"images": [item["secure_url"] for item in response.get("resources", [])]}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error fetching lab requisitions: {str(e)}")
-
-@app.post("/analyze-lab-requisition/")
-async def analyze_lab_requisition(request: AnalyzeRequest):
-    # Use Gemini API for lab requisition analysis
-    return await analyze_image_with_gemini(request.image_url)
-
-if __name__ == "__main__":
-    uvicorn.run(app, host="127.0.0.1", port=8000)
